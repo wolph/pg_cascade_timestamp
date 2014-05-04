@@ -1,3 +1,7 @@
+/* Created by Rick van Hattem - http://wol.ph/
+ *
+ * This Trigger function will automatically update the updated at date for
+ * all linked tables */
 #include "postgres.h"
 #include "access/htup.h"
 #include "catalog/pg_type.h"
@@ -5,6 +9,16 @@
 #include "executor/spi.h"
 #include "utils/builtins.h"
 #include <ctype.h>
+
+/* Since Postgres 9.3 we need the `htup_details.h` include */
+#ifndef HeapTupleHeaderGetOid
+#include "access/htup_details.h"
+#endif
+
+/* Since Postgres 9.2 we need the `rel.h` include */
+#ifndef RelationData
+#include "utils/rel.h"
+#endif
 
 #ifdef PG_MODULE_MAGIC
 PG_MODULE_MAGIC;
