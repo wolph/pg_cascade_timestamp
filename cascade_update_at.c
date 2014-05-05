@@ -1,7 +1,24 @@
-/* Created by Rick van Hattem - http://wol.ph/
- *
- * This Trigger function will automatically update the updated at date for
- * all linked tables */
+/*
+Copyright (c) 2014, Rick van Hattem <Wolph at wol.ph> - http://wol.ph/
+All rights reserved.
+
+This Trigger makes denormalization of `updated_at` type of columns possible
+with much better performance than regular triggers.
+
+Usage:
+-- Creating a trigger to automatically update the `updated_at` column on the
+-- `topic` table through the `topic_id` foreign key on `post` if `post` was
+-- created, updated or deleted.
+
+DROP TRIGGER IF EXISTS post_update_trigger ON post;
+
+CREATE CONSTRAINT TRIGGER post_update_trigger
+AFTER UPDATE OR INSERT OR DELETE ON post
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW 
+EXECUTE PROCEDURE cascade_update_at(topic, updated_at, topic_id);
+
+*/
+
 #include "postgres.h"
 #include "access/htup.h"
 #include "catalog/pg_type.h"
