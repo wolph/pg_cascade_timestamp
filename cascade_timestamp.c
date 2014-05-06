@@ -9,13 +9,20 @@ Usage:
 -- Creating a trigger to automatically update the `updated_at` column on the
 -- `topic` table through the `topic_id` foreign key on `post` if `post` was
 -- created, updated or deleted.
-
+--
+--
+-- cascade_timestamp(
+--     destination_table,
+--     destination_timestamp_column,
+--     destination_key (primary key),
+--     source_key (foreign key),
+-- )
 DROP TRIGGER IF EXISTS post_update_trigger ON post;
 
 CREATE CONSTRAINT TRIGGER post_update_trigger
 AFTER UPDATE OR INSERT OR DELETE ON post
 DEFERRABLE INITIALLY DEFERRED FOR EACH ROW 
-EXECUTE PROCEDURE cascade_update_at(topic, updated_at, topic_id);
+EXECUTE PROCEDURE cascade_timestamp(topic, updated_at, id, topic_id);
 
 */
 
@@ -41,7 +48,7 @@ EXECUTE PROCEDURE cascade_update_at(topic, updated_at, topic_id);
 PG_MODULE_MAGIC;
 #endif
 
-extern Datum cascade_update_at(PG_FUNCTION_ARGS);
+extern Datum cascade_timestamp(PG_FUNCTION_ARGS);
 
 typedef struct {
     char *ident;
@@ -52,10 +59,10 @@ static EPlan *FPlans = NULL;
 static int nFPlans = 0;
 
 static EPlan *find_plan(char *ident, EPlan **eplan, int *nplans);
-PG_FUNCTION_INFO_V1(cascade_update_at)
+PG_FUNCTION_INFO_V1(cascade_timestamp)
 ;
 
-Datum cascade_update_at(PG_FUNCTION_ARGS){
+Datum cascade_timestamp(PG_FUNCTION_ARGS){
     TriggerData *trigdata = (TriggerData *)fcinfo->context;
     HeapTuple newtuple = trigdata->tg_newtuple, oldtuple =
             trigdata->tg_trigtuple, rettuple = NULL;
@@ -79,28 +86,28 @@ Datum cascade_update_at(PG_FUNCTION_ARGS){
 
     /* make sure it's called as a trigger */
     if(!CALLED_AS_TRIGGER(fcinfo)){
-        elog(ERROR, "cascade_update_at: must be called as a trigger");
+        elog(ERROR, "cascade_timestamp: must be called as a trigger");
         SPI_finish();
         return PointerGetDatum(NULL);
     }
 
     /* make sure it's called after update */
     if(!TRIGGER_FIRED_AFTER(trigdata->tg_event)){
-        elog(ERROR, "cascade_update_at: must be called after the event");
+        elog(ERROR, "cascade_timestamp: must be called after the event");
         SPI_finish();
         return PointerGetDatum(NULL);
     }
 
     /* make sure it's called for each row */
     if(!TRIGGER_FIRED_FOR_ROW(trigdata->tg_event)){
-        elog(ERROR, "cascade_update_at: must be called for each row");
+        elog(ERROR, "cascade_timestamp: must be called for each row");
         SPI_finish();
         return PointerGetDatum(NULL);
     }
 
     /* and that it's called with the right arguments */
     if(trigger->tgnargs < 3){
-        elog(ERROR, "cascade_update_at: A destination table, column and a source column were expected, got %d arguments", trigger->tgnargs);
+        elog(ERROR, "cascade_timestamp: A destination table, timestamp column, primary key column and a foreign key column were expected, got %d arguments", trigger->tgnargs);
         SPI_finish();
         return PointerGetDatum(NULL);
     }
@@ -140,11 +147,12 @@ Datum cascade_update_at(PG_FUNCTION_ARGS){
     args = trigger->tgargs;
     tupdesc = rel->rd_att;
 
-    for(i=3; i<trigger->tgnargs; i+=2){
+    /* Make sure the foreign key actually exists and has a value */
+    for(i=4; i<trigger->tgnargs; i+=2){
         fnumber = SPI_fnumber(tupdesc, args[i]);
         if (fnumber < 0){
             elog(ERROR, "\"%s\" has no attribute \"%s\"",
-                    relname, args[2]);
+                    relname, args[3]);
         }
 
         newval = SPI_getvalue(rettuple, tupdesc, fnumber);
@@ -154,6 +162,7 @@ Datum cascade_update_at(PG_FUNCTION_ARGS){
         }
     }
 
+    /* No value for the foreign key */
     if(!update){
         SPI_finish();
         return PointerGetDatum(rettuple);
@@ -162,7 +171,7 @@ Datum cascade_update_at(PG_FUNCTION_ARGS){
     /* Connect to SPI manager */
     if ((ret = SPI_connect()) < 0){
         /* internal error */
-        elog(ERROR, "cascade_update_at: SPI_connect returned %d", ret);
+        elog(ERROR, "cascade_timestamp: SPI_connect returned %d", ret);
     }
 
     /*
@@ -193,15 +202,16 @@ Datum cascade_update_at(PG_FUNCTION_ARGS){
         snprintf(
                 sql,
                 sizeof(sql),
-                "UPDATE %s SET %s = NOW() WHERE id = $1",
+                "UPDATE %s SET %s = NOW() WHERE %s = $1",
                 args[0],
-                args[1]
+                args[1],
+                args[2]
         );
 
         plan->plan = SPI_prepare(sql, 1, &argtype);
         if(plan->plan == NULL){
             /* internal error */
-            elog(ERROR, "cascade_update_at: SPI_prepare returned %d", SPI_result);
+            elog(ERROR, "cascade_timestamp: SPI_prepare returned %d", SPI_result);
         }
 
         /*
@@ -212,7 +222,7 @@ Datum cascade_update_at(PG_FUNCTION_ARGS){
         plan->plan = SPI_saveplan(plan->plan);
         if (plan->plan == NULL){
             /* internal error */
-            elog(ERROR, "cascade_update_at: SPI_saveplan returned %d", SPI_result);
+            elog(ERROR, "cascade_timestamp: SPI_saveplan returned %d", SPI_result);
         }
     }
 
